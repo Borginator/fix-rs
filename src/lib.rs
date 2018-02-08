@@ -26,6 +26,7 @@
 #![feature(attr_literals)]
 #![feature(plugin)]
 #![feature(proc_macro)]
+#![feature(const_atomic_usize_new)]
 
 #![plugin(phf_macros)]
 

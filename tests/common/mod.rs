@@ -12,6 +12,7 @@
 extern crate chrono;
 extern crate fix_rs;
 extern crate mio;
+extern crate net2;
 
 use mio::{Events,Poll,PollOpt,Ready,Token};
 use mio::tcp::{TcpListener,TcpStream};
@@ -33,9 +34,7 @@ use fix_rs::fix_version::FIXVersion;
 use fix_rs::fixt::engine::{Engine,EngineEvent,Connection,Listener};
 use fix_rs::fixt::message::{BuildFIXTMessage,FIXTMessage};
 use fix_rs::message_version::MessageVersion;
-
-const SOCKET_BASE_PORT: usize = 7000;
-static SOCKET_PORT: AtomicUsize = AtomicUsize::new(SOCKET_BASE_PORT);
+use self::net2::TcpBuilder;
 
 pub const CLIENT_TARGET_COMP_ID: &'static [u8] = b"TX"; //Test Exchange
 pub const CLIENT_SENDER_COMP_ID: &'static [u8] = b"TEST";
@@ -248,8 +247,11 @@ impl TestStream {
 
     pub fn setup_test_server_with_ver(fix_version: FIXVersion,message_version: MessageVersion,message_dictionary: HashMap<&'static [u8],Box<BuildFIXTMessage + Send>>) -> (TestStream,Engine,Connection) {
         //Setup server listener socket.
-        let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127,0,0,1),SOCKET_PORT.fetch_add(1,Ordering::SeqCst) as u16));
-        let listener = TcpListener::bind(&addr).unwrap();
+        let tcp = TcpBuilder::new_v4().unwrap();
+        tcp.reuse_address(true).unwrap();
+        tcp.bind("127.0.0.1:7000");
+        let addr = tcp.local_addr().unwrap();
+        let listener = TcpListener::from_listener(tcp.to_tcp_listener().unwrap(), &addr).unwrap();
 
         //Setup client and connect to socket.
         let mut client = Engine::new(message_dictionary.clone(),MAX_MESSAGE_SIZE).unwrap();
@@ -305,12 +307,18 @@ impl TestStream {
 
     pub fn setup_test_client_with_ver(fix_version: FIXVersion,message_version: MessageVersion,message_dictionary: HashMap<&'static [u8],Box<BuildFIXTMessage + Send>>) -> (TestStream,Engine,Listener,Connection) {
         //Setup client and listener.
-        let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127,0,0,1),SOCKET_PORT.fetch_add(1,Ordering::SeqCst) as u16));
         let mut client = Engine::new(message_dictionary.clone(),MAX_MESSAGE_SIZE).unwrap();
+
+        let tcp = TcpBuilder::new_v4().unwrap();
+        tcp.reuse_address(true).unwrap();
+        tcp.connect("127.0.0.1:7000");
+        let connector = tcp.to_tcp_stream();
+        let addr = tcp.local_addr().unwrap();
+
         let listener = client.add_listener(SERVER_SENDER_COMP_ID,&addr).unwrap().unwrap();
 
         //Setup a client socket and connect to server.
-        let stream = TcpStream::connect(&addr).unwrap();
+        let stream = TcpStream::from_stream(connector.unwrap()).unwrap();
 
         //Confirm client was able to connect.
         let event = client.poll(Duration::from_secs(5)).expect("Could not accept");
